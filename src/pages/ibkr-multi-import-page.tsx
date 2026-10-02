@@ -94,7 +94,7 @@ const IBKRMultiImportPage: React.FC<IBKRMultiImportPageProps> = ({ ctx }) => {
   // Initialize HTTP client
   useEffect(() => {
     if (ctx?.api?.http) {
-      setHttpClient(ctx.api.http);
+      setHttpClient(ctx.api.network);
     }
   }, [ctx]);
 
@@ -569,8 +569,43 @@ const IBKRMultiImportPage: React.FC<IBKRMultiImportPageProps> = ({ ctx }) => {
 
             if (transactionsWithAccountId.length > 0) {
               try {
-                await ctx.api.activities.import(transactionsWithAccountId);
+                const activitiesApi = ctx.api.activities;
+                const importResult = await activitiesApi["import"](transactionsWithAccountId);
                 groupTotalImported += transactionsWithAccountId.length;
+
+                // Link FOREX transfer pairs using trade ID from comment
+                // Comment format: FX:EUR.USD:20260930:1599209942
+                try {
+                  const importedActivities = importResult?.activities || [];
+                  ctx.api.logger.info(`[IBKR DEBUG] importedActivities count: ${importedActivities.length}, sample: ${JSON.stringify(importedActivities.slice(0,2))}`);
+                  const fxActivities = importedActivities.filter((a: any) =>
+                    a?.comment?.startsWith("FX:") && a?.id &&
+                    (a?.activityType === "TRANSFER_IN" || a?.activityType === "TRANSFER_OUT")
+                  );
+
+                  // Group by trade ID (last segment of comment)
+                  const byTradeId = new Map<string, any[]>();
+                  for (const activity of fxActivities) {
+                    const parts = activity.comment.split(":");
+                    const tradeId = parts[parts.length - 1];
+                    if (!byTradeId.has(tradeId)) byTradeId.set(tradeId, []);
+                    byTradeId.get(tradeId)!.push(activity);
+                  }
+
+                  // Link pairs
+                  for (const [tradeId, pair] of byTradeId) {
+                    if (pair.length === 2 && pair[0].id && pair[1].id) {
+                      try {
+                        await ctx.api.activities.linkTransfer(pair[0].id, pair[1].id);
+                        ctx.api.logger.info(`[IBKR] Linked FX transfer pair: ${tradeId}`);
+                      } catch (linkError) {
+                        ctx.api.logger.warn(`[IBKR] Failed to link FX pair ${tradeId}: ${linkError}`);
+                      }
+                    }
+                  }
+                } catch (linkingError) {
+                  ctx.api.logger.warn(`[IBKR] Transfer linking failed: ${linkingError}`);
+                }
               } catch (importError) {
                 groupTotalFailed += transactionsWithAccountId.length;
                 groupErrors.push(`Import failed for ${txnCurrency}: ${getErrorMessage(importError)}`);
@@ -604,7 +639,64 @@ const IBKRMultiImportPage: React.FC<IBKRMultiImportPageProps> = ({ ctx }) => {
 
       // Check if still mounted before final state updates
       if (!isMountedRef.current) return;
-      setImportResults(results);
+      
+          // Link FOREX transfer pairs after all imports complete
+          try {
+            ctx.api.logger.info("[IBKR] Starting FOREX transfer linking...");
+            const allAccounts = await ctx.api.accounts.getAll();
+            const ibkrAccounts = allAccounts.filter((a: any) => a.group === groupName);
+            
+            // Fetch all transfer activities from all IBKR accounts
+            const allTransfers: any[] = [];
+            for (const account of ibkrAccounts) {
+              try {
+                const activities = await ctx.api.activities.getAll(account.id);
+                const transfers = activities.filter((a: any) => 
+                  (a.activityType === "TRANSFER_IN" || a.activityType === "TRANSFER_OUT") &&
+                  a.comment?.startsWith("FX:") &&
+                  a.id
+                );
+                allTransfers.push(...transfers);
+              } catch (e) {
+                ctx.api.logger.warn(`[IBKR] Could not fetch activities for account ${account.id}: ${e}`);
+              }
+            }
+
+            ctx.api.logger.info(`[IBKR] Found ${allTransfers.length} FX transfer activities to link`);
+
+            // Group by trade ID (last segment of comment: FX:EUR.USD:20260930:1599209942)
+            const byTradeId = new Map<string, any[]>();
+            for (const activity of allTransfers) {
+              const parts = activity.comment.split(":");
+              const tradeId = parts[parts.length - 1];
+              if (!byTradeId.has(tradeId)) byTradeId.set(tradeId, []);
+              byTradeId.get(tradeId)!.push(activity);
+            }
+
+            // Link pairs
+            let linkedCount = 0;
+            let skippedCount = 0;
+            for (const [tradeId, pair] of byTradeId) {
+              if (pair.length === 2 && pair[0].id && pair[1].id) {
+                // Skip if already linked
+                if (pair[0].linkedTransferId || pair[1].linkedTransferId) {
+                  skippedCount++;
+                  continue;
+                }
+                try {
+                  await ctx.api.activities.linkTransfer(pair[0].id, pair[1].id);
+                  linkedCount++;
+                } catch (linkError) {
+                  ctx.api.logger.warn(`[IBKR] Failed to link FX pair ${tradeId}: ${linkError}`);
+                }
+              }
+            }
+            ctx.api.logger.info(`[IBKR] Linked ${linkedCount} FX transfer pairs, skipped ${skippedCount} already linked`);
+          } catch (linkingError) {
+            ctx.api.logger.warn(`[IBKR] Transfer linking failed: ${linkingError}`);
+          }
+
+        setImportResults(results);
       setImportProgress(undefined);
       setIsImporting(false);
     } catch (error) {

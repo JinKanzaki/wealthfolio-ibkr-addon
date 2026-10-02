@@ -3,11 +3,8 @@ import { CsvRowData } from "../presets/types";
 /**
  * Detects all unique currencies from IBKR CSV data
  *
- * IBKR exports have two sections:
- * - Section 1 (summary): Shows currency breakdown with LevelOfDetail = "Currency"
- * - Section 2 (transactions): Shows all transactions with base currency in CurrencyPrimary
- *
- * We ONLY read from Section 1 (summary) to get the actual currency list.
+ * Primary method: looks for Cash Report rows with LevelOfDetail = "Currency"
+ * Fallback: detects currencies from CurrencyPrimary field on transaction rows
  *
  * @param parsedData - Array of parsed CSV rows
  * @returns Sorted array of unique currency codes
@@ -15,9 +12,8 @@ import { CsvRowData } from "../presets/types";
 export function detectCurrenciesFromIBKR(parsedData: CsvRowData[]): string[] {
   const currenciesSet = new Set<string>();
 
+  // Primary method: summary section rows (LevelOfDetail = "Currency")
   for (const row of parsedData) {
-    // ONLY read from summary section rows (LevelOfDetail = "Currency")
-    // This avoids picking up column names or base currency from transaction section
     if (row.LevelOfDetail === "Currency") {
       const currency = row.CurrencyPrimary?.trim();
       if (currency && currency.length > 0 && currency !== "Currency") {
@@ -26,6 +22,34 @@ export function detectCurrenciesFromIBKR(parsedData: CsvRowData[]): string[] {
     }
   }
 
-  // Convert to array and sort alphabetically
+  // Fallback: if no summary rows found, detect from CurrencyPrimary on all rows
+  if (currenciesSet.size === 0) {
+    for (const row of parsedData) {
+      const currency = row.CurrencyPrimary?.trim();
+      if (
+        currency &&
+        currency.length === 3 &&
+        currency !== "Currency" &&
+        /^[A-Z]{3}$/.test(currency)
+      ) {
+        currenciesSet.add(currency);
+      }
+    }
+  }
+
+  // Second fallback: check the Currency column directly
+  if (currenciesSet.size === 0) {
+    for (const row of parsedData) {
+      const currency = row.Currency?.trim();
+      if (
+        currency &&
+        currency.length === 3 &&
+        /^[A-Z]{3}$/.test(currency)
+      ) {
+        currenciesSet.add(currency);
+      }
+    }
+  }
+
   return Array.from(currenciesSet).sort();
 }

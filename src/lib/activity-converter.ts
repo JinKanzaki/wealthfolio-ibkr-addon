@@ -612,7 +612,11 @@ export async function convertToActivityImports(
       const finalUnitPrice = isCashTransaction ? 1 : unitPrice;
 
       // Validate date - missing date should be an error, not silently defaulted
-      const activityDate = row.Date || row.ReportDate;
+      const rawDate = row.Date || row.ReportDate;
+      // Format date from YYYYMMDD to YYYY-MM-DD if needed
+      const activityDate = rawDate && rawDate.length === 8 && !rawDate.includes('-')
+        ? `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`
+        : rawDate;
       if (!activityDate) {
         errors.push({
           rowIndex,
@@ -636,6 +640,8 @@ export async function convertToActivityImports(
         comment: row.ActivityDescription || row.Description || "",
         isDraft: false,
         isValid: true,
+        quoteCcy: currency,
+        instrumentType: "EQUITY",
       };
 
       activities.push(activity);

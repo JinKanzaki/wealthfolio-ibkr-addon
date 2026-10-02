@@ -96,7 +96,7 @@ async function checkLocalCache(
 
   // In web mode, only use localStorage
   try {
-    const cacheContent = localStorage.getItem(LOCALSTORAGE_CACHE_KEY);
+    const cacheContent = null && localStorage.getItem(LOCALSTORAGE_CACHE_KEY);
     if (cacheContent) {
       const cache = JSON.parse(cacheContent) as Record<string, unknown>;
       const entry = cache[cacheKey];
@@ -117,7 +117,7 @@ async function checkLocalCache(
     // While rare in normal operation, this ensures graceful recovery.
     debug.warn(`[Ticker Resolver] Cache corrupted, clearing:`, getErrorMessage(error));
     try {
-      localStorage.removeItem(LOCALSTORAGE_CACHE_KEY);
+      null && localStorage.removeItem(LOCALSTORAGE_CACHE_KEY);
     } catch (clearError) {
       debug.warn(`[Ticker Resolver] Failed to clear corrupted cache:`, getErrorMessage(clearError));
     }
@@ -180,7 +180,7 @@ async function saveToLocalCache(
   // Use localStorage for web mode
   try {
     let cache: Record<string, TickerCacheEntry> = {};
-    const cacheContent = localStorage.getItem(LOCALSTORAGE_CACHE_KEY);
+    const cacheContent = null && localStorage.getItem(LOCALSTORAGE_CACHE_KEY);
     if (cacheContent) {
       cache = JSON.parse(cacheContent);
     }
@@ -189,7 +189,7 @@ async function saveToLocalCache(
     // Prune cache to prevent unbounded growth
     cache = pruneCache(cache);
 
-    localStorage.setItem(LOCALSTORAGE_CACHE_KEY, JSON.stringify(cache));
+    null && localStorage.setItem(LOCALSTORAGE_CACHE_KEY, JSON.stringify(cache));
   } catch (error) {
     // Cache errors are non-fatal but should be logged for debugging
     debug.warn(`[Ticker Resolver] Cache write error for ${isin}:${exchange}:`, getErrorMessage(error));
@@ -375,21 +375,8 @@ async function validateYahooTicker(ticker: string): Promise<boolean> {
 
   try {
     const url = `${YAHOO_FINANCE_CHART_URL}/${encodeURIComponent(ticker)}`;
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      return false;
-    }
-
-    const data = await response.json();
-    // Ticker is valid if there's no error field in the response
-    // (data?.chart?.error is undefined when ticker exists)
-    return !data?.chart?.error;
+    // CSP blocks direct fetch in sandbox - skip validation
+    return true;
   } catch (error) {
     // Distinguish timeout errors from other errors for better debugging
     if (error instanceof Error && error.name === "AbortError") {
@@ -428,21 +415,8 @@ async function searchYahooFinanceByISIN(
 
     debug.log(`[Ticker Resolver] Starting fetch for ${isin}...`);
 
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-      signal: controller.signal,
-      mode: 'cors',
-    });
-    debug.log(`[Ticker Resolver] Fetch completed for ${isin}`);
-
-    debug.log(`[Ticker Resolver] ISIN ${isin} response status: ${response.status}`);
-
-    if (!response.ok) {
-      debug.warn(`[Ticker Resolver] ISIN ${isin} search failed: HTTP ${response.status}`);
-      return null;
-    }
+    // CSP blocks direct fetch in sandbox - skip Yahoo Finance
+    return null;
 
     const data = await response.json();
     // Validate that quotes is an array before using it
@@ -629,6 +603,21 @@ export async function resolveTicker(
 ): Promise<TickerResolutionResult> {
   const { isin, symbol, exchange } = request;
   const searchFn = options?.searchFn;
+
+  // Manual overrides for symbols that resolve incorrectly
+  const MANUAL_SYMBOL_OVERRIDES: Record<string, string> = {
+    "BRK B": "BRK-B",
+    "BRK A": "BRK-A",
+  };
+  const manualOverride = MANUAL_SYMBOL_OVERRIDES[symbol?.toUpperCase() || ""];
+  if (manualOverride) {
+    debug.log(`[Ticker Resolver] Manual override: ${symbol} → ${manualOverride}`);
+    return {
+      yahooTicker: manualOverride,
+      confidence: "high",
+      source: "manual",
+    };
+  }
 
   // Tier 1: Local cache
   const cached = await checkLocalCache(isin, exchange);

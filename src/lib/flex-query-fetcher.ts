@@ -1,14 +1,5 @@
 /**
  * IBKR Flex Query Web Service API Client
- *
- * Two-step HTTP API for programmatically retrieving pre-configured Flex Queries:
- * 1. Send request to generate report (returns reference code)
- * 2. Retrieve generated report using reference code
- *
- * API Documentation:
- * - Base URL: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
- * - SendRequest endpoint: /SendRequest?t={TOKEN}&q={QUERY_ID}&v=3
- * - GetStatement endpoint: /GetStatement?t={TOKEN}&q={REFERENCE_CODE}&v=3
  */
 
 import { FLEX_QUERY_INITIAL_DELAY_MS, FLEX_QUERY_MAX_DELAY_MS, FLEX_QUERY_ABSOLUTE_TIMEOUT_MS, MIN_TOKEN_LENGTH, MAX_TOKEN_LENGTH, MAX_QUERY_ID_LENGTH } from "./constants";
@@ -18,10 +9,6 @@ export interface FlexQueryConfig {
   queryId: string;
 }
 
-/**
- * Validate IBKR Flex Query token format
- * IBKR tokens are typically 32+ character alphanumeric strings
- */
 export function validateFlexToken(token: string): { valid: boolean; error?: string } {
   if (!token || typeof token !== "string") {
     return { valid: false, error: "Token is required" };
@@ -33,17 +20,12 @@ export function validateFlexToken(token: string): { valid: boolean; error?: stri
   if (trimmed.length > MAX_TOKEN_LENGTH) {
     return { valid: false, error: `Token appears too long (maximum ${MAX_TOKEN_LENGTH} characters)` };
   }
-  // IBKR tokens are alphanumeric
   if (!/^[a-zA-Z0-9]+$/.test(trimmed)) {
     return { valid: false, error: "Token should contain only alphanumeric characters" };
   }
   return { valid: true };
 }
 
-/**
- * Validate IBKR Flex Query ID format
- * Query IDs are numeric identifiers
- */
 export function validateQueryId(queryId: string): { valid: boolean; error?: string } {
   if (!queryId || typeof queryId !== "string") {
     return { valid: false, error: "Query ID is required" };
@@ -81,30 +63,24 @@ export interface FlexQueryResult {
 }
 
 /**
- * HTTP client interface for making requests
- * Uses addon SDK's HTTP API to bypass CORS
+ * SDK 3.x network API interface
  */
-export interface HttpClient {
-  fetch(
-    url: string,
-    options?: {
-      method?: string;
-      headers?: Record<string, string>;
-      body?: string;
-      timeout_ms?: number;
-    }
-  ): Promise<{
+export interface NetworkClient {
+  request(options: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }): Promise<{
     status: number;
-    status_text: string;
+    statusText?: string;
+    status_text?: string;
     headers: Record<string, string>;
     body: string;
     ok: boolean;
   }>;
 }
 
-/**
- * IBKR Flex API error codes
- */
 export const FLEX_ERROR_CODES: Record<number, string> = {
   1001: "Statement generation unavailable; retry shortly",
   1003: "Statement generation in progress; wait and try again",
@@ -127,66 +103,40 @@ export const FLEX_ERROR_CODES: Record<number, string> = {
 const FLEX_API_BASE = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService";
 const USER_AGENT = "Wealthfolio/1.0";
 
-// Module-level HTTP client - set via setHttpClient()
-let httpClient: HttpClient | null = null;
+let networkClient: NetworkClient | null = null;
 
-/**
- * Set the HTTP client to use for API requests
- * This should be called with ctx.api.http from the addon context
- */
-export function setHttpClient(client: HttpClient): void {
-  httpClient = client;
+export function setHttpClient(client: NetworkClient): void {
+  networkClient = client;
 }
 
-/**
- * Get the current HTTP client
- */
-function getHttpClient(): HttpClient {
-  if (!httpClient) {
+function getHttpClient(): NetworkClient {
+  if (!networkClient) {
     throw new Error(
-      "HTTP client not set. Call setHttpClient(ctx.api.http) before using Flex Query functions."
+      "Network client not set. Call setHttpClient(ctx.api.network) before using Flex Query functions."
     );
   }
-  return httpClient;
+  return networkClient;
 }
 
-/**
- * Sanitize a string from XML response to prevent XSS/injection attacks
- * - Removes any HTML tags
- * - Limits string length
- * - Escapes special characters
- */
 function sanitizeXmlString(value: string | undefined, maxLength: number = 500): string | undefined {
   if (!value) return undefined;
-
-  // Remove any HTML-like tags
   let sanitized = value.replace(/<[^>]*>/g, "");
-
-  // Decode common XML entities
   sanitized = sanitized
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'");
-
-  // Truncate to prevent excessively long strings
   if (sanitized.length > maxLength) {
     sanitized = sanitized.substring(0, maxLength) + "...";
   }
-
   return sanitized.trim();
 }
 
-/**
- * Validate that a URL is from an expected IBKR domain
- */
 function isValidIBKRUrl(url: string | undefined): boolean {
   if (!url) return false;
-
   try {
     const parsed = new URL(url);
-    // Only allow HTTPS URLs from IBKR domains
     return (
       parsed.protocol === "https:" &&
       (parsed.hostname.endsWith(".interactivebrokers.com") ||
@@ -197,10 +147,6 @@ function isValidIBKRUrl(url: string | undefined): boolean {
   }
 }
 
-/**
- * Parse XML response to extract status and data
- * Includes sanitization to prevent injection attacks
- */
 function parseFlexResponse(xml: string): {
   status: string;
   referenceCode?: string;
@@ -208,54 +154,35 @@ function parseFlexResponse(xml: string): {
   errorCode?: number;
   errorMessage?: string;
 } {
-  // Extract status
   const statusMatch = /<Status>([^<]+)<\/Status>/i.exec(xml);
   const status = sanitizeXmlString(statusMatch?.[1]) || "";
-
-  // Extract reference code (alphanumeric only for safety)
   const refMatch = /<ReferenceCode>([^<]+)<\/ReferenceCode>/i.exec(xml);
   const referenceCode = refMatch?.[1]?.replace(/[^a-zA-Z0-9]/g, "") || undefined;
-
-  // Extract URL (validate it's from an IBKR domain)
   const urlMatch = /<Url>([^<]+)<\/Url>/i.exec(xml);
   const extractedUrl = urlMatch?.[1];
   const url = isValidIBKRUrl(extractedUrl) ? extractedUrl : undefined;
-
-  // Extract error code (numeric only)
   const errorCodeMatch = /<ErrorCode>(\d+)<\/ErrorCode>/i.exec(xml);
   const errorCode = errorCodeMatch ? parseInt(errorCodeMatch[1], 10) : undefined;
-
-  // Extract error message (sanitized)
   const errorMsgMatch = /<ErrorMessage>([^<]+)<\/ErrorMessage>/i.exec(xml);
   const errorMessage = sanitizeXmlString(errorMsgMatch?.[1], 200);
-
   return { status, referenceCode, url, errorCode, errorMessage };
 }
 
-/**
- * Step 1: Send request to generate Flex Query report
- *
- * @param config Flex Query configuration with token and query ID
- * @returns Promise resolving to request result with reference code or error
- */
-export async function sendFlexRequest(
-  config: FlexQueryConfig
-): Promise<FlexQueryRequestResult> {
+export async function sendFlexRequest(config: FlexQueryConfig): Promise<FlexQueryRequestResult> {
   const url = `${FLEX_API_BASE}/SendRequest?t=${encodeURIComponent(config.token)}&q=${encodeURIComponent(config.queryId)}&v=3`;
 
   try {
     const client = getHttpClient();
-    const response = await client.fetch(url, {
+    const response = await client.request({
+      url,
       method: "GET",
-      headers: {
-        "User-Agent": USER_AGENT,
-      },
+      headers: { "User-Agent": USER_AGENT },
     });
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return {
         success: false,
-        error: `HTTP error: ${response.status} ${response.status_text}`,
+        error: `HTTP error: ${response.status} ${response.statusText ?? response.status_text ?? ""}`,
       };
     }
 
@@ -263,40 +190,21 @@ export async function sendFlexRequest(
     const parsed = parseFlexResponse(xml);
 
     if (parsed.status === "Success" && parsed.referenceCode) {
-      return {
-        success: true,
-        referenceCode: parsed.referenceCode,
-        url: parsed.url,
-      };
+      return { success: true, referenceCode: parsed.referenceCode, url: parsed.url };
     }
 
-    // Handle error response
     const errorMessage =
       parsed.errorMessage ||
       (parsed.errorCode && FLEX_ERROR_CODES[parsed.errorCode]) ||
       "Unknown error from IBKR";
 
-    return {
-      success: false,
-      error: errorMessage,
-      errorCode: parsed.errorCode,
-    };
+    return { success: false, error: errorMessage, errorCode: parsed.errorCode };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return {
-      success: false,
-      error: `Network error: ${message}`,
-    };
+    return { success: false, error: `Network error: ${message}` };
   }
 }
 
-/**
- * Step 2: Retrieve generated Flex Query statement
- *
- * @param config Flex Query configuration with token
- * @param referenceCode Reference code from sendFlexRequest
- * @returns Promise resolving to statement XML or error
- */
 export async function getFlexStatement(
   config: FlexQueryConfig,
   referenceCode: string
@@ -305,82 +213,44 @@ export async function getFlexStatement(
 
   try {
     const client = getHttpClient();
-    const response = await client.fetch(url, {
+    const response = await client.request({
+      url,
       method: "GET",
-      headers: {
-        "User-Agent": USER_AGENT,
-      },
+      headers: { "User-Agent": USER_AGENT },
     });
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return {
         success: false,
-        error: `HTTP error: ${response.status} ${response.status_text}`,
+        error: `HTTP error: ${response.status} ${response.statusText ?? response.status_text ?? ""}`,
       };
     }
 
     const responseBody = response.body;
 
-    // Check if response is an error (has Status element - XML error response)
     if (responseBody.includes("<Status>") && !responseBody.includes("<FlexQueryResponse>")) {
       const parsed = parseFlexResponse(responseBody);
-
-      // Special handling for "statement in progress"
       if (parsed.errorCode === 1003 || parsed.errorCode === 1019) {
-        return {
-          success: false,
-          error: "Statement generation in progress",
-          errorCode: parsed.errorCode,
-        };
+        return { success: false, error: "Statement generation in progress", errorCode: parsed.errorCode };
       }
-
       const errorMessage =
         parsed.errorMessage ||
         (parsed.errorCode && FLEX_ERROR_CODES[parsed.errorCode]) ||
         "Unknown error from IBKR";
-
-      return {
-        success: false,
-        error: errorMessage,
-        errorCode: parsed.errorCode,
-      };
+      return { success: false, error: errorMessage, errorCode: parsed.errorCode };
     }
 
-    // Success - return the CSV data
-    return {
-      success: true,
-      csv: responseBody,
-    };
+    return { success: true, csv: responseBody };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return {
-      success: false,
-      error: `Network error: ${message}`,
-    };
+    return { success: false, error: `Network error: ${message}` };
   }
 }
 
-/**
- * Delay helper
- */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Fetch Flex Query with automatic retry and polling
- *
- * This function:
- * 1. Sends request to generate report
- * 2. Polls for statement availability (with exponential backoff)
- * 3. Returns the statement XML or error
- *
- * Has both retry-based and absolute timeout protection to prevent hanging.
- *
- * @param config Flex Query configuration
- * @param options Polling options
- * @returns Promise resolving to Flex Query result
- */
 export async function fetchFlexQuery(
   config: FlexQueryConfig,
   options: {
@@ -401,33 +271,23 @@ export async function fetchFlexQuery(
 
   const startTime = Date.now();
 
-  // Step 1: Send request
   onProgress?.("Sending Flex Query request...");
   const requestResult = await sendFlexRequest(config);
 
   if (!requestResult.success || !requestResult.referenceCode) {
-    return {
-      success: false,
-      error: requestResult.error || "Failed to get reference code",
-      errorCode: requestResult.errorCode,
-    };
+    return { success: false, error: requestResult.error || "Failed to get reference code", errorCode: requestResult.errorCode };
   }
 
   onProgress?.(`Request accepted. Reference: ${requestResult.referenceCode}`);
 
-  // Step 2: Poll for statement with both retry limit and absolute timeout
   let currentDelay = initialDelayMs;
   let retries = 0;
 
   while (retries < maxRetries) {
-    // Check absolute timeout
     const elapsed = Date.now() - startTime;
     if (elapsed >= absoluteTimeoutMs) {
       onProgress?.("Operation timed out");
-      return {
-        success: false,
-        error: `Absolute timeout exceeded (${Math.round(absoluteTimeoutMs / 1000)}s). IBKR may be experiencing delays.`,
-      };
+      return { success: false, error: `Absolute timeout exceeded (${Math.round(absoluteTimeoutMs / 1000)}s). IBKR may be experiencing delays.` };
     }
 
     const remainingTime = absoluteTimeoutMs - elapsed;
@@ -438,91 +298,39 @@ export async function fetchFlexQuery(
 
     if (statementResult.success && statementResult.csv) {
       onProgress?.("Statement retrieved successfully");
-      return {
-        success: true,
-        csv: statementResult.csv,
-      };
+      return { success: true, csv: statementResult.csv };
     }
 
-    // Check if we should retry (1003/1019 = generation in progress, 1018 = rate limit)
     if (
       statementResult.errorCode === 1003 ||
       statementResult.errorCode === 1019 ||
       statementResult.errorCode === 1018 ||
       statementResult.error === "Statement generation in progress"
     ) {
-      // Statement still generating or rate limited, continue polling with backoff
       retries++;
       currentDelay = Math.min(currentDelay * 1.5, maxDelayMs);
       continue;
     }
 
-    // Non-retryable error
-    return {
-      success: false,
-      error: statementResult.error,
-      errorCode: statementResult.errorCode,
-    };
+    return { success: false, error: statementResult.error, errorCode: statementResult.errorCode };
   }
 
-  return {
-    success: false,
-    error: "Max retries exceeded waiting for statement generation",
-  };
+  return { success: false, error: "Max retries exceeded waiting for statement generation" };
 }
 
-/**
- * Test connection to IBKR Flex Web Service
- *
- * Attempts to send a request (but doesn't wait for statement)
- * to verify credentials are valid.
- *
- * @param config Flex Query configuration
- * @returns Promise resolving to connection test result
- */
 export async function testFlexConnection(
   config: FlexQueryConfig
 ): Promise<{ success: boolean; message: string }> {
   const result = await sendFlexRequest(config);
 
   if (result.success) {
-    return {
-      success: true,
-      message: "Connection successful. Credentials are valid.",
-    };
+    return { success: true, message: "Connection successful. Credentials are valid." };
   }
 
-  // Provide user-friendly error messages
-  if (result.errorCode === 1015) {
-    return {
-      success: false,
-      message: "Invalid token. Please check your Flex token.",
-    };
-  }
+  if (result.errorCode === 1015) return { success: false, message: "Invalid token. Please check your Flex token." };
+  if (result.errorCode === 1012) return { success: false, message: "Token has expired. Please generate a new token in IBKR Client Portal." };
+  if (result.errorCode === 1014) return { success: false, message: "Invalid Query ID. Please check your Flex Query ID." };
+  if (result.errorCode === 1013) return { success: false, message: "IP address not allowed. Please update IP restrictions in IBKR Client Portal." };
 
-  if (result.errorCode === 1012) {
-    return {
-      success: false,
-      message: "Token has expired. Please generate a new token in IBKR Client Portal.",
-    };
-  }
-
-  if (result.errorCode === 1014) {
-    return {
-      success: false,
-      message: "Invalid Query ID. Please check your Flex Query ID.",
-    };
-  }
-
-  if (result.errorCode === 1013) {
-    return {
-      success: false,
-      message: "IP address not allowed. Please update IP restrictions in IBKR Client Portal.",
-    };
-  }
-
-  return {
-    success: false,
-    message: result.error || "Connection failed",
-  };
+  return { success: false, message: result.error || "Connection failed" };
 }
