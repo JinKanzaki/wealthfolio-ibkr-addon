@@ -2,271 +2,215 @@
 
 A comprehensive import solution for Interactive Brokers (IBKR) activity statements with multi-currency support and Flex Query API integration.
 
+> **This is a community fork** of [CoolONEOfficial/wealthfolio-ibkr-addon](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon), ported to Wealthfolio SDK 3.9.0 by [JinKanzaki](https://github.com/JinKanzaki) with assistance from Claude (Anthropic). The original addon was built for SDK 2.0 and stopped working with Wealthfolio 3.x. This fork fixes compatibility, adds FOREX transfer linking, and documents the exact Flex Query configuration required to make it work.
+>
+> **Honest disclosure:** This fork was almost entirely a trial-and-error process guided by Claude. It works, but treat it as community software — test it carefully before relying on it.
+
+## What's Changed From the Original
+
+- **SDK 3.9.0 compatibility** — fixed route registration, network API (`ctx.api.network` instead of `ctx.api.http`), permission declarations, and the `activities["import"]` keyword mangling bug
+- **FOREX transfer linking** — automatically pairs EUR/USD, EUR/GBP etc. conversion legs using `linkTransfer`, eliminating "incomplete transfer" health center errors (146 → 6 unlinked rounding artifacts)
+- **Required field fixes** — added `quoteCcy`, `instrumentType` fields required by Wealthfolio 3.9
+- **Date format fix** — converts IBKR's YYYYMMDD format to YYYY-MM-DD
+- **localStorage removed** — replaced with graceful no-op since addon sandbox blocks localStorage
+- **Yahoo Finance CSP fix** — direct fetch calls to Yahoo Finance are blocked by Wealthfolio's Content Security Policy; patched to use fallback resolution instead
+- **Form sandbox fix** — replaced `<form>` elements with `<div>` + onClick since sandbox blocks form submission
+- **Symbol override** — added manual mapping for BRK B → BRK-B to prevent wrong ticker resolution
+- **Flex Query configuration** — documented the exact setup that actually works (see below)
+
 ## Features
 
+- **Flex Query API**: Automatically fetch transactions via IBKR Flex Query with configurable auto-fetch (max once per 6 hours)
 - **CSV Import**: Upload multiple IBKR activity statement CSV files in a single import session
-- **Flex Query API**: Automatically fetch transactions via IBKR Flex Query with configurable auto-fetch
-- **Multi-Currency Support**: Automatically detects currencies and creates separate accounts per currency
-- **ISIN-Based Ticker Resolution**: Resolves IBKR symbols to Yahoo Finance compatible tickers
-- **FX Conversion Splitting**: Splits foreign exchange transactions into withdrawal/deposit pairs
+- **Multi-Currency Support**: Automatically detects currencies (EUR, USD, GBP, DKK etc.) and creates separate accounts per currency
+- **FOREX Transfer Linking**: Automatically pairs currency conversion legs to prevent health center errors
 - **Transaction Types**: Handles trades, dividends, fees, deposits, withdrawals, and transfers
-- **Smart Deduplication**: Prevents duplicate imports when using both CSV and Flex Query
+- **Smart Deduplication**: Prevents duplicate imports on repeated syncs
+
+## Requirements
+
+- Wealthfolio **3.9.0 or later**
+- Node.js **20+** (for building from source)
+- pnpm (for building from source)
 
 ## Installation
 
 ### From GitHub Releases
 
-1. Go to the [Releases](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon/releases) page
+1. Go to the [Releases](https://github.com/JinKanzaki/wealthfolio-ibkr-addon/releases) page
 2. Download the latest `.zip` file
-3. Open Wealthfolio → Settings → Addons
+3. Open Wealthfolio → Settings → Add-ons
 4. Click "Install from File" and select the downloaded ZIP
-5. Enable the addon and grant required permissions
+5. Click "Approve & Install" to grant required permissions
 
-### From Wealthfolio Store
+## Flex Query Setup (Important — Read This First)
 
-1. Open Wealthfolio → Settings → Addons → Store
-2. Find "IBKR Multi-Currency Import"
-3. Click Install
+The Flex Query configuration is critical. Use the wrong settings and the addon will either fail to import or import transactions incorrectly.
 
-## Usage
+### Step 1: Create a Flex Query in IBKR
 
-### CSV Import
+1. Log in to [IBKR Client Portal](https://www.interactivebrokers.com)
+2. Navigate to **Reports → Flex Queries → Activity Flex Query**
+3. Click **+** to create a new query
+4. Give it a name (e.g. "Wealthfolio Import")
 
-1. Navigate to **Activities > IBKR Multi-Import** from the sidebar
-2. Select "Import from CSV Files"
-3. Enter an account group name (e.g., "TFSA", "Trading")
-4. Upload one or more IBKR activity statement CSV files
-5. Review detected currencies and adjust account names if needed
-6. Review the transaction preview with resolved tickers
-7. Click "Start Import" to create accounts and import transactions
+### Step 2: Enable These Sections
 
-### Flex Query Setup
+Enable the following sections (click each to expand and configure):
 
-To use automatic transaction fetching via IBKR Flex Query API:
+**Cash Report** ✓
+- Options: **Currency Breakout** (not Base Currency Summary)
+- Fields: **Currency**, **Level of Detail**
+- This is required for currency detection
 
-#### Step 1: Create Activity Flex Query
+**Trades** ✓
+- Options: **Execution**
+- Fields: Click **Select All**
 
-1. Log in to [IBKR Account Management](https://www.interactivebrokers.com/sso/Login)
-2. Navigate to **Reports > Flex Queries > Activity Flex Query**
-3. Click **Create** or **+** to add a new query
+**Cash Transactions** ✓
+- Options: **Dividends, Withholding Tax, Broker Fees, Deposits & Withdrawals, Detail**
+- Fields: Click **Select All**
 
-#### Step 2: Configure Required Sections
+**Statement of Funds** ✓
+- Options: **Base Currency Summary**
+- Fields: Click **Select All**
+- This section provides the FOREX conversion data
 
-Add the following sections with their required fields:
+**Transfers** ✓ (optional but recommended)
+- Options: **Transfer**
+- Fields: Click **Select All**
 
-<details>
-<summary><b>Trades</b> (Required)</summary>
+> **Important:** For every section, click **Select All** fields. The addon needs `ClientAccountID` as the first column to correctly parse the CSV sections. Missing fields cause silent import failures.
 
-**Options:** Execution
-
-**Required Fields:**
-- ClientAccountID, CurrencyPrimary, FXRateToBase
-- AssetClass, Symbol, Description, ISIN
-- TradeID, DateTime, TradeDate, SettleDateTarget
-- Quantity, TradePrice, Proceeds, Taxes, IBCommission, NetCash
-- Buy/Sell, TransactionID
-
-</details>
-
-<details>
-<summary><b>Cash Transactions</b> (Required)</summary>
-
-**Options:** Dividends, Withholding Tax, 871(m) Withholding, Broker Fees, Deposits & Withdrawals, Detail
-
-**Required Fields:**
-- ClientAccountID, CurrencyPrimary, FXRateToBase
-- AssetClass, Symbol, Description, ISIN
-- Date/Time, SettleDate, Amount, Type
-- TransactionID
-
-</details>
-
-<details>
-<summary><b>Transfers</b> (Required)</summary>
-
-**Options:** Transfer
-
-**Required Fields:**
-- ClientAccountID, CurrencyPrimary, FXRateToBase
-- AssetClass, Symbol, Description, ISIN
-- Date, DateTime, SettleDate
-- Type, Direction, Quantity, TransferPrice
-- TransactionID
-
-</details>
-
-<details>
-<summary><b>Statement of Funds</b> (Optional - for FX conversions)</summary>
-
-**Options:** Base Currency Summary
-
-**Required Fields:**
-- ClientAccountID, CurrencyPrimary, FXRateToBase
-- Symbol, Description, ISIN
-- ReportDate, Date, SettleDate
-- ActivityCode, ActivityDescription
-- Debit, Credit, Amount
-- TransactionID
-
-</details>
-
-#### Step 3: Delivery Configuration
+### Step 3: Delivery Settings
 
 | Setting | Value |
 |---------|-------|
 | **Format** | CSV |
 | **Include header and trailer records?** | No |
 | **Include column headers?** | Yes |
-| **Display single column header row?** | No |
+| **Display single column header row?** | No (important) |
 | **Include section code and line descriptor?** | No |
 | **Period** | Last 365 Calendar Days |
 
-#### Step 4: General Configuration
+### Step 4: Date/Time Format
 
 | Setting | Value |
 |---------|-------|
-| **Date Format** | `yyyy-MM-dd` |
+| **Date Format** | `yyyyMMdd` (no dashes — IBKR default) |
 | **Time Format** | `HHmmss` |
-| **Date/Time Separator** | `' '` (single-space) |
+| **Date/Time Separator** | `;` |
 | **Include Canceled Trades?** | No |
-| **Include Currency Rates?** | No |
 
-#### Step 5: Generate Flex Web Service Token
+### Step 5: Get Your Flex Token
 
-1. In IBKR Account Management, go to **Reports > Flex Queries**
-2. At the bottom, find **Flex Web Service**
-3. Click **Generate Token** (or view existing token)
-4. Copy and save the token securely
+1. In IBKR Client Portal, go to **Reports → Flex Queries**
+2. Scroll to **Flex Web Service** at the bottom
+3. Click **Generate Token** or copy your existing token
 
-#### Step 6: Configure in Wealthfolio
+### Step 6: Note Your Query ID
 
-1. Open Wealthfolio → **Activities > IBKR Settings**
-2. Click **Add Configuration**
-3. Enter your **Query ID** (shown at the top of your Flex Query)
-4. Enter your **Flex Web Service Token**
-5. Give it a name (e.g., "Main Account")
-6. Enable **Auto-fetch on portfolio update** for automatic syncing
+After saving the Flex Query, the Query ID appears at the top of the query details page. You'll need this in Wealthfolio.
 
-## Import Workflow
+### Step 7: Configure in Wealthfolio
 
-### Step 1: Source Selection
-Choose between CSV file import or Flex Query API fetch.
+1. Open Wealthfolio → **IBKR Settings** (sidebar)
+2. Enter your **Flex Web Service Token**
+3. Click **Add Query**
+4. Enter your **Query ID** and give it a name
+5. Enable **Auto-fetch** if you want automatic syncing
 
-### Step 2: Group & Files (CSV) / Configuration (Flex Query)
-- **CSV**: Enter group name and upload files
-- **Flex Query**: Select saved configuration or enter credentials
+## Usage
 
-### Step 3: Currency Accounts
-- Review detected currencies
-- Edit account names if needed (default: "{GroupName} - {Currency}")
-- See which accounts already exist and will be reused
+### First Import
 
-### Step 4: Transaction Preview
-- View ticker resolution progress (ISIN → Yahoo tickers)
-- Preview transactions grouped by currency account
-- Review any failed ticker resolutions
+1. Go to **IBKR Import** in the sidebar
+2. Select **Flex Query API** (or CSV if preferred)
+3. Enter account group name — use `IBKR` (this creates accounts like "IBKR - EUR", "IBKR - USD" etc.)
+4. Click through the wizard — review currencies, preview transactions, import
+5. After import, the addon automatically links FOREX transfer pairs
 
-### Step 5: Import Results
-- View success/failure counts per account
-- Navigate to accounts or activities to verify
+### Subsequent Imports
 
-## Supported IBKR Data
+With auto-fetch enabled, the addon will automatically fetch and import new transactions whenever Wealthfolio's portfolio updates (max once per 6 hours). Deduplication prevents re-importing existing transactions.
 
-### Transaction Types
-- Stock/ETF trades (BUY, SELL)
-- Dividends
-- Withholding taxes
-- Broker fees and commissions
-- Cash deposits and withdrawals
-- Internal transfers
-- Foreign exchange conversions
+## Known Limitations
 
-### CSV Format
-The addon supports standard IBKR activity statement CSV exports containing:
-- Multiple concatenated sections (trades, dividends, transfers)
-- Multi-currency transaction data
-- ISIN identifiers for securities
+- **6 unlinked FOREX transfers**: Tiny rounding/remainder legs from currency conversions (~$0.01-$1.00) may remain unlinked in the Health Center. Mark these as "External" manually — they have no meaningful impact on returns.
+- **Ticker resolution**: Without Yahoo Finance API access (blocked by CSP), ticker resolution falls back to Wealthfolio's built-in search and symbol+exchange matching. Most common stocks resolve correctly. For any that don't, edit the asset manually in Wealthfolio.
+- **BRK B**: Mapped to BRK-B via hardcoded override. Other unusual tickers may need manual correction.
+
+## Supported Transaction Types
+
+| IBKR Type | Wealthfolio Type |
+|-----------|-----------------|
+| BUY | BUY |
+| SELL | SELL |
+| DIV | DIVIDEND |
+| FRTAX / TTAX | TAX |
+| OFEE | FEE |
+| DEP | DEPOSIT |
+| WITH | WITHDRAWAL |
+| FOREX | TRANSFER_IN / TRANSFER_OUT (linked pairs) |
 
 ## Permissions
 
-This addon requires the following permissions:
-
 | Permission | Purpose |
 |------------|---------|
-| accounts.getAll, accounts.create | Create and manage multi-currency accounts |
-| activities.import, activities.checkImport | Import transactions from CSV/API |
-| assets.searchTicker | Resolve ISIN symbols to Yahoo Finance tickers |
-| ui.sidebar.addItem, ui.router.add | Display import wizard and settings pages |
-| secrets.get, secrets.set, secrets.delete | Securely store Flex Query credentials |
-| events.portfolio.onUpdateComplete | Trigger automatic Flex Query fetch |
-| logger.* | Log operations for debugging |
+| accounts.getAll, accounts.create | Create multi-currency accounts |
+| activities.import, activities.getAll | Import and fetch transactions |
+| activities.linkTransfer | Pair FOREX conversion legs |
+| market-data.searchTicker | Resolve ticker symbols |
+| secrets.get/set/delete | Store Flex Query credentials |
+| events.onUpdateComplete | Trigger auto-fetch |
+| network.request | Fetch from IBKR Flex API |
 
-## Development
-
-### Prerequisites
-
-- Node.js 18+
-- pnpm
-
-### Setup
+## Building From Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon.git
+# Clone
+git clone https://github.com/JinKanzaki/wealthfolio-ibkr-addon.git
 cd wealthfolio-ibkr-addon
 
-# Install dependencies
+# Install dependencies (requires Node.js 20+)
+npm install -g pnpm
+pnpm approve-builds  # approve esbuild
 pnpm install
 
-# Build the addon
-pnpm build
-
-# Run in watch mode for development
-pnpm dev
+# Build and package
+npm run bundle
+# ZIP created at dist/wealthfolio-ibkr-addon-*.zip
 ```
 
-### Testing
+## Troubleshooting
 
-```bash
-# Run tests
-pnpm test
+**"0 currencies detected"**
+→ Make sure you enabled the Cash Report section with Currency Breakout option and all fields selected
 
-# Run tests in watch mode
-pnpm test:watch
+**"No transaction section found"**
+→ Make sure ClientAccountID is included in your Flex Query fields (Select All covers this)
 
-# Type checking
-pnpm type-check
-```
+**Activities imported but not showing**
+→ Make sure your IBKR accounts are set to "Transactions" tracking mode in Wealthfolio
 
-### Building for Distribution
+**Ticker resolves to wrong stock**
+→ Edit the asset in Wealthfolio → Securities and correct the symbol manually
 
-```bash
-# Build and create distribution ZIP
-pnpm bundle
-```
-
-The ZIP file will be created in `dist/`.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+**"Addon permission denied"**
+→ Uninstall and reinstall the addon, then approve all permissions when prompted
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
-## Author
+## Credits
 
-Nikolai Trukhin
+- Original addon: [Nikolai Trukhin (CoolONEOfficial)](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon)
+- SDK 3.9 port and FOREX linking: [JinKanzaki](https://github.com/JinKanzaki) with [Claude](https://claude.ai) (Anthropic)
 
 ## Links
 
-- [GitHub Repository](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon)
-- [Issue Tracker](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon/issues)
+- [Original Repository](https://github.com/CoolONEOfficial/wealthfolio-ibkr-addon)
+- [This Fork](https://github.com/JinKanzaki/wealthfolio-ibkr-addon)
+- [Issue Tracker](https://github.com/JinKanzaki/wealthfolio-ibkr-addon/issues)
 - [Wealthfolio](https://wealthfolio.app)
