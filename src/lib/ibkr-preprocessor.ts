@@ -265,7 +265,7 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
     };
   }
 
-  if (isDividendByDescription || isDividendByActivityCode) {
+  if (isDividendByActivityCode) {
     // First check for FEE indicators - some dividend-related rows are actually fees
     // e.g., "BTI(US1104481072) CASH DIVIDEND USD 0.802221 PER SHARE - FEE"
     const isFeeRow =
