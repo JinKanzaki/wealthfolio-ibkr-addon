@@ -71,14 +71,11 @@ Enable the following sections (click each to expand and configure):
 - Options: **Dividends, Withholding Tax, Broker Fees, Deposits & Withdrawals, Detail**
 - Fields: Click **Select All**
 
-**Statement of Funds** ✓
-- Options: **Base Currency Summary**
-- Fields: Click **Select All**
-- This section provides the FOREX conversion data
-
 **Transfers** ✓ (optional but recommended)
 - Options: **Transfer**
 - Fields: Click **Select All**
+
+> ⚠️ **Do NOT enable Statement of Funds.** This section causes duplicate dividend entries with incorrect amounts (EUR base currency equivalents instead of the actual dividend currency amounts). The addon does not need it — all required data comes from the sections above.
 
 > **Important:** For every section, click **Select All** fields. The addon needs `ClientAccountID` as the first column to correctly parse the CSV sections. Missing fields cause silent import failures.
 
@@ -139,6 +136,7 @@ With auto-fetch enabled, the addon will automatically fetch and import new trans
 - **6 unlinked FOREX transfers**: Tiny rounding/remainder legs from currency conversions (~$0.01-$1.00) may remain unlinked in the Health Center. Mark these as "External" manually — they have no meaningful impact on returns.
 - **Ticker resolution**: Without Yahoo Finance API access (blocked by CSP), ticker resolution falls back to Wealthfolio's built-in search and symbol+exchange matching. Most common stocks resolve correctly. For any that don't, edit the asset manually in Wealthfolio.
 - **BRK B**: Mapped to BRK-B via hardcoded override. Other unusual tickers may need manual correction.
+- **US withholding tax**: US dividends may not have withholding tax rows in IBKR if your account is set up under a tax treaty (e.g. US-Austria) that reduces the rate to 0% or handles it differently. This is expected behaviour, not a bug.
 
 ## Supported Transaction Types
 
@@ -146,7 +144,8 @@ With auto-fetch enabled, the addon will automatically fetch and import new trans
 |-----------|-----------------|
 | BUY | BUY |
 | SELL | SELL |
-| DIV | DIVIDEND |
+| DIV (Cash Transactions section) | DIVIDEND |
+| Withholding Tax (Cash Transactions section) | TAX |
 | FRTAX / TTAX | TAX |
 | OFEE | FEE |
 | DEP | DEPOSIT |
@@ -189,6 +188,9 @@ npm run bundle
 
 **"No transaction section found"**
 → Make sure ClientAccountID is included in your Flex Query fields (Select All covers this)
+
+**Duplicate dividends or wrong dividend amounts**
+→ Make sure Statement of Funds is NOT enabled in your Flex Query. This section causes duplicates with incorrect EUR-equivalent amounts.
 
 **Activities imported but not showing**
 → Make sure your IBKR accounts are set to "Transactions" tracking mode in Wealthfolio
