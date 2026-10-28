@@ -440,14 +440,42 @@ export async function convertToActivityImports(
 
         if (dividendInfo) {
           currency = dividendInfo.currency;
-          // Use actual cash amount from IBKR directly (Amount field contains
-          // the real paid amount in the dividend's own currency)
-          const directAmount = Math.abs(parseNumeric(row.Amount));
-          if (directAmount > 0) {
-            amount = directAmount;
-          } else {
-            // Fallback to TradeMoney if Amount not available
+
+          // If dividend currency matches base currency, TradeMoney is already correct
+          if (currency === baseCurrency) {
             amount = Math.abs(parseNumeric(row.TradeMoney));
+          } else {
+            // Dividend is in a different currency than base (e.g., USD dividend, GBP base)
+            // TradeMoney is in base currency, so we need to convert to original currency
+            //
+            // Preferred method: Calculate from per-share × position quantity
+            const position = getPositionAtDate(positionHistory, symbol, txDate);
+
+            if (position > 0 && dividendInfo.perShare > 0) {
+              // Calculate: amount = position × perShare
+              amount = position * dividendInfo.perShare;
+            } else {
+              // Fallback to FX conversion if position unknown
+              const fxRate = getFXRate(fxLookup, baseCurrency, currency, txDate);
+              if (fxRate && fxRate > 0) {
+                amount = Math.abs(parseNumeric(row.TradeMoney)) * fxRate;
+              } else {
+                // Last resort: use TradeMoney as-is and fall back to base currency
+                // This is better than having incorrect currency on the amount
+                amount = Math.abs(parseNumeric(row.TradeMoney));
+                const originalCurrency = currency;
+                currency = baseCurrency;
+                const warningMsg = `Dividend currency mismatch: ${symbol} on ${txDate} - no FX rate or position for ${baseCurrency}/${dividendInfo.currency}, using base currency (${baseCurrency}) instead of ${originalCurrency}`;
+                debug.warn(warningMsg);
+                // Surface this as a non-fatal error so user is aware of currency change
+                errors.push({
+                  rowIndex,
+                  identifier,
+                  message: warningMsg,
+                  rowData: row as Record<string, unknown>,
+                });
+              }
+            }
           }
         } else {
           // Couldn't parse currency from description, use base currency

@@ -125,7 +125,7 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
     // - OFEE: Other fees - but with special handling (see below)
     // NOTE: DINT (Debit Interest) exists at BOTH BaseCurrency AND Currency levels.
     //       Skip BaseCurrency level (has base currency amounts) - use Currency level (has real currency amounts).
-    if (activityCode === "TTAX" || activityCode === "STAX") {
+    if (activityCode === "DIV" || activityCode === "TTAX" || activityCode === "STAX") {
       // Don't return here - let it fall through to proper classification
     } else if (activityCode === "OFEE") {
       // OFEE (Other Fees) handling at BaseCurrency level:
@@ -251,7 +251,6 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
   // Check both formats
   const isDividendByDescription = description.toUpperCase().includes("CASH DIVIDEND");
   const isDividendByActivityCode = activityCode === "DIV";
-  const isDividendByNotesCode = notesCodes === "Dividends";
   const isTaxByActivityCode = activityCode === "FRTAX";
 
   // Withholding Tax rows (Notes/Codes = "Withholding Tax")
@@ -266,7 +265,7 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
     };
   }
 
-  if (isDividendByDescription || isDividendByNotesCode) {
+  if (isDividendByDescription || isDividendByActivityCode) {
     // First check for FEE indicators - some dividend-related rows are actually fees
     // e.g., "BTI(US1104481072) CASH DIVIDEND USD 0.802221 PER SHARE - FEE"
     const isFeeRow =
