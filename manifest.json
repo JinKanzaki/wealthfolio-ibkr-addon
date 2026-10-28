@@ -1,7 +1,7 @@
 {
   "id": "ibkr-multi-import",
   "name": "IBKR Multi-Currency Import",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Import IBKR transactions via CSV files or Flex Query API with automatic multi-currency account creation",
   "author": "Nikolai Trukhin",
   "sdkVersion": "3.9.0",
