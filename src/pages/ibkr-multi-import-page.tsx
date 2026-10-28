@@ -673,23 +673,24 @@ const IBKRMultiImportPage: React.FC<IBKRMultiImportPageProps> = ({ ctx }) => {
               byTradeId.get(tradeId)!.push(activity);
             }
 
-            // Link pairs
+            // Link pairs - match Transfer Out with Transfer In by trade ID
             let linkedCount = 0;
             let skippedCount = 0;
-            for (const [tradeId, pair] of byTradeId) {
-              if (pair.length === 2 && pair[0].id && pair[1].id) {
-                // Skip if already linked
-                if (pair[0].linkedTransferId || pair[1].linkedTransferId) {
-                  skippedCount++;
-                  continue;
-                }
+            for (const [tradeId, activities] of byTradeId) {
+              const outs = activities.filter((a: any) => a.activityType === "TRANSFER_OUT" && !a.linkedTransferId);
+              const ins = activities.filter((a: any) => a.activityType === "TRANSFER_IN" && !a.linkedTransferId);
+              
+              // Link each out with corresponding in (by index)
+              const pairCount = Math.min(outs.length, ins.length);
+              for (let i = 0; i < pairCount; i++) {
                 try {
-                  await ctx.api.activities.linkTransfer(pair[0].id, pair[1].id);
+                  await ctx.api.activities.linkTransfer(outs[i].id, ins[i].id);
                   linkedCount++;
                 } catch (linkError) {
-                  ctx.api.logger.warn(`[IBKR] Failed to link FX pair ${tradeId}: ${linkError}`);
+                  ctx.api.logger.warn(`[IBKR] Failed to link FX pair ${tradeId}[${i}]: ${linkError}`);
                 }
               }
+              if (pairCount === 0) skippedCount++;
             }
             ctx.api.logger.info(`[IBKR] Linked ${linkedCount} FX transfer pairs, skipped ${skippedCount} already linked`);
           } catch (linkingError) {
