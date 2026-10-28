@@ -1,6 +1,6 @@
 {
   "name": "wealthfolio-ibkr-addon",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Import IBKR transactions via CSV files or Flex Query API with automatic multi-currency account creation",
   "type": "module",
   "main": "dist/addon.js",

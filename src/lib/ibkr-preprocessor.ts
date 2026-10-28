@@ -251,6 +251,7 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
   // Check both formats
   const isDividendByDescription = description.toUpperCase().includes("CASH DIVIDEND");
   const isDividendByActivityCode = activityCode === "DIV";
+  const isDividendByNotesCode = notesCodes === "Dividends";
   const isTaxByActivityCode = activityCode === "FRTAX";
 
   // Withholding Tax rows (Notes/Codes = "Withholding Tax")
@@ -265,7 +266,7 @@ function classifyIBKRTransaction(row: IBKRTransactionRow): IBKRClassification {
     };
   }
 
-  if (isDividendByDescription || isDividendByActivityCode) {
+  if (isDividendByDescription || isDividendByNotesCode) {
     // First check for FEE indicators - some dividend-related rows are actually fees
     // e.g., "BTI(US1104481072) CASH DIVIDEND USD 0.802221 PER SHARE - FEE"
     const isFeeRow =
